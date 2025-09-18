@@ -98,45 +98,8 @@ def to_label(feature):
 sorted_feature = [to_label(feature) for feature in selected_features[sorted]]
 sorted_importance = feature_importance[sorted]
 
-#Bar plot to display the important features
-plt.figure(figsize=(10,6))
-sns.barplot(x=sorted_importance, y=sorted_feature, palette="coolwarm")
-plt.xlabel("Feature Importance Score")
-plt.ylabel("Features")
-plt.title("Top 10 Feature")
-plt.show()
-
-x_train, x_test, y_train, y_test = train_test_split(process_data, df['target'], test_size=0.2, random_state=42)
+x_train, x_test, y_train, y_test = train_test_split(process_data_no_duplicate, remove_duplicates['target'], test_size=0.2, random_state=42)
 print(f"Training Data Shape: {x_train.shape}, Test Data Shape: {x_test.shape}")
-
-#visualization for numerical data
-#Histogram (to see distribution)
-plt.figure(figsize=(12,8))
-for i, col in enumerate(num_columns, 1):
-    plt.subplot(2, 3, i)
-    sns.histplot(df[col], bins=30, kde=True)
-    plt.title(f'Distribution of {column_name[col]}')
-    plt.xlabel(column_name[col])
-plt.tight_layout()
-#plt.show()
-
-#visualization for categorical data
-#Bar chart (compare the amount of different types)
-plt.figure(figsize=(12,8))
-for i, col in enumerate(cat_columns, 1):
-    plt.subplot(2, 4, i)
-    sns.countplot(x=df[col])
-    plt.title(f'{column_name[col]}')
-    plt.xlabel(column_name[col])
-plt.tight_layout()
-#plt.show()
-
-
-#visualization for coorelation heatmap
-plt.figure(figsize=(10,6))
-sns.heatmap(df[num_columns].corr(), annot=True, cmap="coolwarm", linewidths=0.5)
-plt.title("Heatmap")
-#plt.show()
 
 #calculate euclidean distance for KNN
 def euclidean_distance(row1, row2):
@@ -195,7 +158,7 @@ knn_r2 = r2_score(y_test, predictions)
 print(f"R-squared Score:{knn_r2:.4f}")
 
 
-x_train, x_test, y_train, y_test = train_test_split(x_selected, y, test_size=0.2, random_state=42)
+x_train, x_test, y_train, y_test = train_test_split(process_data_no_duplicate, remove_duplicates['target'], test_size=0.2, random_state=42)
 
 x_train_tensor = torch.tensor(x_train, dtype=torch.float32)
 x_test_tensor = torch.tensor(x_test, dtype=torch.float32)
@@ -207,7 +170,7 @@ train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-model = TabNet(inp_dim=x_selected.shape[1], final_out_dim=1).to(device)
+model = TabNet(inp_dim=x_train.shape[1], final_out_dim=1).to(device)
 criterion = torch.nn.MSELoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
@@ -268,4 +231,4 @@ plt.ylabel('Score', fontsize= 14)
 plt.xlabel('Metric', fontsize=14)
 plt.legend(title='Model')
 plt.tight_layout()
-#plt.show()
+plt.show()

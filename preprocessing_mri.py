@@ -1,28 +1,91 @@
 import numpy as np
 import os
 import cv2
+import tensorflow as tf
 import matplotlib.pyplot as plt
 from skimage import morphology
 from skimage.registration import optical_flow_tvl1
 from skimage.transform import resize
 import nibabel as nib
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense
+from tensorflow.keras.models import Sequential
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.utils import Sequence
+import time
 
 mri_images = "cancer"
+train_folder = os.path.join(mri_images, "training")
+test_folder = os.path.join(mri_images, "testing")
+classes = sorted([d for d in os.listdir(train_folder) if os.path.isdir(os.path.join(train_folder, d))])
+num_class = len(classes)
+assert num_class ==4, f"found {num_class}: {classes}"
+batch =32
+AUTOTUNE = tf.data.AUTOTUNE
+
+seed = 42
+np.random.seed(seed)
+np.random.seed(seed)
+tf.random.set_seed(seed)
+
+time_program = time.perf_counter()
+
+
+def to_grayscale(image):
+    if image is None:
+        raise ValueError("Image is None (bad path or read error).")
+
+    if image.ndim == 2:
+        gray = image
+    elif image.ndim ==3:
+        c = image.shape[2]
+        if c == 1:
+            gray = image[:,:, 0]
+        elif c==3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        elif c==4:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
+        else:
+            raise ValueError(f"Unsupport channel count: {c}")
+    else:
+        raise ValueError(f"unsupported image shapre: {image.shape}")
+
+    if gray.dtype != np.uint8:
+        gmin, gmax = float(np.min(gray)), float(np.max(gray))
+        gray = ((gray - gmin) / (gmax-gmin)*255.0).astype(np.uint8) if gmax > gmin else np.zeros_like(gray, dtype=np.uint8)
+
+    return gray
+
 
 #creating mask for images
 def create_mask(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-    _, binary_mask = cv2.threshold(gray, 30, 255, cv2.THRESH_BINARY)
-    binary_mask = morphology.remove_small_objects(binary_mask.astype(bool), min_size=500)
-    return binary_mask.astype(np.uint8)
+    gray = to_grayscale(image)
+    _, binary_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    binary_mask = cv2.medianBlur(binary_mask, 3)
+    binary_mask = cv2.morphologyEx(binary_mask, cv2.MORPH_OPEN, np.ones((3,3), np.uint8), iterations=1)
+    return binary_mask
 
 #removing background
 def remove_background(image, mask):
+    m= (mask > 0).astype(image.dtype)
+    if image.ndim ==2:
+        return image*m
+    elif image.ndim == 3:
+        return image *m[..., None]
+    else: 
+        raise ValueError(f"image shape unsupported: {image.shape}")
     return image*np.expand_dims(mask, axis=-1)
 
 #reducing noise
 def denoise_image(image):
-    return cv2.fastNlMeansDenoising((image*255).astype(np.uint8), None, 10, 7,21) / 255.0
+    x= image
+    #img = (np.clip(image, 0,1)*255).astype(np.uint8)
+    if x.ndim == 3 and x.shape[-1]==1:
+        x = x[...,0]
+    img = (np.clip(x,0,1)*255).astype(np.uint8)
+    out = cv2.fastNlMeansDenoising(img, None, h=7, templateWindowSize=7, searchWindowSize=21)
+    return (out.astype(np.float32) / 255.0)[..., None]
 
 #resize image
 def resample_image(image, target_shape):
@@ -31,7 +94,159 @@ def resample_image(image, target_shape):
 def normalize_intensity(image, min_percentile=0.5, max_percentile=99.5):
     min_val = np.percentile(image, min_percentile)
     max_val = np.percentile(image, max_percentile)
-    return (image-min_val)/ (max_val - min_val)
+    eps = 1e-6
+    return (image-min_val)/ (max_val - min_val+eps)
+
+def resize_img(image, target_size):
+    return resize(image, (target_size[0],target_size[1]), order=3, mode='reflect', anti_aliasing=True)
+
+def load_and_preprocess(path, target_size=(224,224), to_grayscale=True):
+    if isinstance(target_size, (list, tuple)) and len(target_size) ==3:
+        target_size = (target_size[0], target_size[1])
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Path not found: {path}")
+
+    bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise ValueError(f"Could not read image {path}")
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+    #mask
+    mask = create_mask(rgb)
+    rgb_bg_remove = remove_background(rgb, mask)
+
+    gray = cv2.cvtColor((rgb_bg_remove*255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)/ 255.0
+    gray = gray[..., None]
+
+    #Denoise & normalize
+    #rgb_denoise = denoise_image(rgb_bg_remove.astype(np.float32)/255.0)
+    rgb_norm = normalize_intensity(gray)
+
+    #resize
+    rgb_resize = resize(rgb_norm, (target_size[0], target_size[1], 1),
+                        order=3, mode='reflect', anti_aliasing=True, preserve_range=True)
+    if to_grayscale:
+        return rgb_resize
+    else:
+        return np.repeat(rgb_resize, 3, axis=-1)
+
+def cnn_model(in_shape):
+    model = Sequential()
+    model.add(Conv2D(32, (3,3), activation='relu', input_shape= in_shape))
+    model.add(MaxPooling2D((2,2)))
+    model.add(Dropout(0.2))
+
+    model.add(Conv2D(64, (3,3), activation='relu'))
+    model.add(MaxPooling2D((2,2)))
+    model.add(Dropout(0.2))
+
+    model.add(Flatten())
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.2))
+    model.add(Dense(4, activation='softmax'))
+
+    model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    return model
+
+# ===== SINGLE-IMAGE SMOKE TEST =====
+# TEST_ONE = True  # set to False to run full training later
+
+# if TEST_ONE:
+#     # find one image in your training set
+#     sample_path = None
+#     for cls in classes:
+#         cls_dir = os.path.join(train_folder, cls)
+#         for f in os.listdir(cls_dir):
+#             if f.lower().endswith((".png", ".jpg", ".jpeg")):
+#                 sample_path = os.path.join(cls_dir, f)
+#                 break
+#         if sample_path:
+#             break
+
+#     if sample_path is None:
+#         raise RuntimeError("No PNG/JPG image found under training/*/*. Please add one and retry.")
+
+#     print("Using sample image:", sample_path)
+#     # smaller size for quick test
+#     target_hw = (224, 224)
+#     x = load_and_preprocess(sample_path, target_size=(target_hw[0], target_hw[1], 1), to_grayscale=True)
+#     # ensure float32 [0,1]
+#     x = x.astype(np.float32)
+#     if x.max() > 1.0:
+#         x /= 255.0
+
+#     print("Preprocessed shape:", x.shape, x.dtype, x.min(), x.max())  # expect (224,224,1)
+
+#     # build a small model for 224x224x1 and 4 classes
+#     model = Sequential([
+#         tf.keras.layers.Input(shape=(target_hw[0], target_hw[1], 1)),
+#         Conv2D(32, (3,3), activation='relu', padding='same'),
+#         MaxPooling2D((2,2)),
+#         Conv2D(64, (3,3), activation='relu', padding='same'),
+#         MaxPooling2D((2,2)),
+#         Flatten(),
+#         Dense(64, activation='relu'),
+#         Dense(num_class, activation='softmax')
+#     ])
+#     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+#     model.summary()
+
+#     # fake label just to exercise a training step
+#     X = np.expand_dims(x, axis=0)        # (1, 224, 224, 1)
+#     y = np.array([0], dtype=np.int64)    # pretend class 0
+
+#     # forward pass
+#     pred = model.predict(X, verbose=0)
+#     print("Forward prediction OK. Pred shape:", pred.shape, "probs:", pred[0])
+
+#     # one tiny training step
+#     history = model.fit(X, y, epochs=1, batch_size=1, verbose=1)
+#     print("Single-image fit OK.")
+
+#     import sys
+#     sys.exit(0)  # stop here so the full training code below won't run
+# ===== END SINGLE-IMAGE SMOKE TEST =====
+
+model = cnn_model((512,512,1))
+
+model.summary()
+
+train_img, train_label = [], []
+for class_idx, class_name in enumerate(classes):
+    class_path = os.path.join(train_folder, class_name)
+    for fname in os.listdir(class_path):
+        if fname.lower().endswith((".png", ".jpg",".jpeg")):
+            fpath = os.path.join(class_path, fname)
+            try:
+                img = load_and_preprocess(fpath, target_size=(512,512,1), to_grayscale=True)
+                if img is None or img.size ==0:
+                    raise ValueError("Preprocess returned empty image")
+                train_img.append(img)
+                train_label.append(class_idx)
+            except Exception as e:
+                print(f"Warning: {e}")
+
+train_img = np.array(train_img, dtype=np.float32)
+train_label = np.array(train_label, dtype=np.int64)
+
+X_train, X_val, y_train, y_val = train_test_split(
+        train_img, train_label,
+        test_size=0.2,
+        random_state=seed,
+        stratify=train_label
+    )
+
+datagen = ImageDataGenerator(
+    rotation_range=15,
+    horizontal_flip=True
+)
+
+train_gen = datagen.flow(X_train, y_train, batch_size=32, shuffle=True)
+history = model.fit(train_gen, epochs=10, validation_data=(X_val, y_val),verbose=1)
+
+val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
+print(f"Validation accuracy: {val_acc: .3f}")
 
 
 for dataset_type in ["testing", "training"]:
@@ -48,52 +263,62 @@ for dataset_type in ["testing", "training"]:
             for img_file in image_files[:2]:
                 img_path = os.path.join(subfolder_path, img_file)
                 img = cv2.imread(img_path)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 
                 mask = create_mask(img)
                 processed_img = remove_background(img, mask)
                 improve_img = denoise_image(processed_img)
                 #resizing makes some images weird so it is currently commented out
-                #resize_img = resample_image(improve_img, (512,512))
+                resize_img = resample_image(improve_img, (512,512, 3))
                 normalize_img = normalize_intensity(improve_img)
+                normalize_img = normalize_intensity(resize_img)
+                datagen = ImageDataGenerator(rotation_range=15, horizontal_flip=True)
+                datagen.fit(train_img)
+
+elapsed_all = time.perf_counter() - time_program
+print(f"\n Total run time: {elapsed_all: .2f} s")
+
+                
+
 
                 # plt.imshow(normalize_img)
                 # plt.title(f"Processed: {img_file}")
                 # plt.axis("off")
                 # plt.show()
 
-fig, axes =plt.subplots(1, 2, figsize=(10,5))
+#fig, axes =plt.subplots(1, 2, figsize=(10,5))
 
 #compare first images from the folders (original vs masked image)
-axes[0].imshow(img)
-axes[0].set_title("Original Image")
-axes[0].axis("off")
+#axes[0].imshow(img)
+#axes[0].set_title("Original Image")
+#axes[0].axis("off")
 
-axes[1].imshow(mask, cmap="gray")
-axes[1].set_title("Binary Mask")
-axes[1].axis("off")
+#axes[1].imshow(mask, cmap="gray")
+#axes[1].set_title("Binary Mask")
+#axes[1].axis("off")
 
-plt.show()
+#plt.show()
 
 #compare first images from the folders (original vs background removed image)
-fig, axes = plt.subplots(1,2, figsize=(10,5))
-axes[0].imshow(img)
-axes[0].set_title("Before Background removed")
-axes[0].axis("off")
+#fig, axes = plt.subplots(1,2, figsize=(10,5))
+#axes[0].imshow(img)
+#axes[0].set_title("Before Background removed")
+#axes[0].axis("off")
 
-axes[1].imshow(processed_img)
-axes[1].set_title("After Background Removal")
-axes[1].axis("off")
+#axes[1].imshow(processed_img)
+#axes[1].set_title("After Background Removal")
+#axes[1].axis("off")
 
-fig, axes = plt.subplots(1, 2, figsize=(10,5))
+#fig, axes = plt.subplots(1, 2, figsize=(10,5))
 
 #compare first images from the folders (original vs remove noise image)
-axes[0].imshow(processed_img)
-axes[0].set_title("Before Denoising")
-axes[0].axis("off")
+#axes[0].imshow(processed_img)
+#axes[0].set_title("Before Denoising")
+#axes[0].axis("off")
 
-axes[1].imshow(improve_img)
-axes[1].set_title("After Denoising")
-axes[1].axis("off")
-plt.show()
+#axes[1].imshow(improve_img)
+#axes[1].set_title("After Denoising")
+#axes[1].axis("off")
+#plt.show()
+
 
