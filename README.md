@@ -1,6 +1,6 @@
-# Heart Attack Prediction and Brain Cancer Classification Using Machine Learning
+# Heart Attack Prediction and Brain Tumor Classification Using Machine Learning
 
-This project use machine learning techniques to predict heart attacks and classify the different types of brain cancer. 
+This project use machine learning techniques to predict heart attacks and classify the different types of brain tumor. 
 
 ## Setup
 1. Clone the repository or download the project
@@ -12,4 +12,4 @@ This project use machine learning techniques to predict heart attacks and classi
 
     If running the Heart Attack data: python preprocessing.py
 
-    If running the Brain Cancer data: python preprocessing_mri.py
+    If running the Brain Tumor data: python preprocessing_mri.py
