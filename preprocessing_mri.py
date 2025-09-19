@@ -149,7 +149,7 @@ def cnn_model(in_shape):
     model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 
-model = cnn_model((512,512,1))
+model = cnn_model((224,224,1))
 
 model.summary()
 
@@ -160,7 +160,7 @@ for class_idx, class_name in enumerate(classes):
         if fname.lower().endswith((".png", ".jpg",".jpeg")):
             fpath = os.path.join(class_path, fname)
             try:
-                img = load_and_preprocess(fpath, target_size=(512,512,1), to_grayscale=True)
+                img = load_and_preprocess(fpath, target_size=(224,224,1), to_grayscale=True)
                 if img is None or img.size ==0:
                     raise ValueError("Preprocess returned empty image")
                 train_img.append(img)
@@ -210,7 +210,7 @@ for dataset_type in ["testing", "training"]:
                 processed_img = remove_background(img, mask)
                 improve_img = denoise_image(processed_img)
                 #resizing makes some images weird so it is currently commented out
-                resize_img = resample_image(improve_img, (512,512, 3))
+                resize_img = resample_image(improve_img, (224,224, 3))
                 normalize_img = normalize_intensity(improve_img)
                 normalize_img = normalize_intensity(resize_img)
                 datagen = ImageDataGenerator(rotation_range=15, horizontal_flip=True)
