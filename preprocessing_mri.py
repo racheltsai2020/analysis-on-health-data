@@ -149,65 +149,6 @@ def cnn_model(in_shape):
     model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 
-# ===== SINGLE-IMAGE SMOKE TEST =====
-# TEST_ONE = True  # set to False to run full training later
-
-# if TEST_ONE:
-#     # find one image in your training set
-#     sample_path = None
-#     for cls in classes:
-#         cls_dir = os.path.join(train_folder, cls)
-#         for f in os.listdir(cls_dir):
-#             if f.lower().endswith((".png", ".jpg", ".jpeg")):
-#                 sample_path = os.path.join(cls_dir, f)
-#                 break
-#         if sample_path:
-#             break
-
-#     if sample_path is None:
-#         raise RuntimeError("No PNG/JPG image found under training/*/*. Please add one and retry.")
-
-#     print("Using sample image:", sample_path)
-#     # smaller size for quick test
-#     target_hw = (224, 224)
-#     x = load_and_preprocess(sample_path, target_size=(target_hw[0], target_hw[1], 1), to_grayscale=True)
-#     # ensure float32 [0,1]
-#     x = x.astype(np.float32)
-#     if x.max() > 1.0:
-#         x /= 255.0
-
-#     print("Preprocessed shape:", x.shape, x.dtype, x.min(), x.max())  # expect (224,224,1)
-
-#     # build a small model for 224x224x1 and 4 classes
-#     model = Sequential([
-#         tf.keras.layers.Input(shape=(target_hw[0], target_hw[1], 1)),
-#         Conv2D(32, (3,3), activation='relu', padding='same'),
-#         MaxPooling2D((2,2)),
-#         Conv2D(64, (3,3), activation='relu', padding='same'),
-#         MaxPooling2D((2,2)),
-#         Flatten(),
-#         Dense(64, activation='relu'),
-#         Dense(num_class, activation='softmax')
-#     ])
-#     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-#     model.summary()
-
-#     # fake label just to exercise a training step
-#     X = np.expand_dims(x, axis=0)        # (1, 224, 224, 1)
-#     y = np.array([0], dtype=np.int64)    # pretend class 0
-
-#     # forward pass
-#     pred = model.predict(X, verbose=0)
-#     print("Forward prediction OK. Pred shape:", pred.shape, "probs:", pred[0])
-
-#     # one tiny training step
-#     history = model.fit(X, y, epochs=1, batch_size=1, verbose=1)
-#     print("Single-image fit OK.")
-
-#     import sys
-#     sys.exit(0)  # stop here so the full training code below won't run
-# ===== END SINGLE-IMAGE SMOKE TEST =====
-
 model = cnn_model((512,512,1))
 
 model.summary()
