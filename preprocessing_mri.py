@@ -9,8 +9,11 @@ from skimage.transform import resize
 import nibabel as nib
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications import ResNet50
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization
+from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Sequential
+from tensorflow.keras.regularizers import l2
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import Sequence
 import time
@@ -100,7 +103,7 @@ def normalize_intensity(image, min_percentile=0.5, max_percentile=99.5):
 def resize_img(image, target_size):
     return resize(image, (target_size[0],target_size[1]), order=3, mode='reflect', anti_aliasing=True)
 
-def load_and_preprocess(path, target_size=(224,224), to_grayscale=True):
+def load_and_preprocess(path, target_size, to_grayscale=True):
     if isinstance(target_size, (list, tuple)) and len(target_size) ==3:
         target_size = (target_size[0], target_size[1])
     
@@ -133,22 +136,36 @@ def load_and_preprocess(path, target_size=(224,224), to_grayscale=True):
 
 def cnn_model(in_shape):
     model = Sequential()
-    model.add(Conv2D(32, (3,3), activation='relu', input_shape= in_shape))
+    model.add(Conv2D(32, (3,3), activation='relu', kernel_regularizer=l2(1e-4), input_shape= in_shape))
+    model.add(BatchNormalization())
     model.add(MaxPooling2D((2,2)))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))
 
-    model.add(Conv2D(64, (3,3), activation='relu'))
+    model.add(Conv2D(64, (3,3), activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(BatchNormalization())
     model.add(MaxPooling2D((2,2)))
-    model.add(Dropout(0.2))
+    model.add(Dropout(0.3))
+
+    model.add(Conv2D(128, (3,3), activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D((2,2)))
+    model.add(Dropout(0.4))
+
+    model.add(Conv2D(256, (3,3), activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D((2,2)))
+    model.add(Dropout(0.5))
 
     model.add(Flatten())
-    model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.2))
+    model.add(Dense(256, activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(Dropout(0.5))
     model.add(Dense(4, activation='softmax'))
 
     model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 
+early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=1)
+lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
 model = cnn_model((224,224,1))
 
 model.summary()
@@ -179,12 +196,17 @@ X_train, X_val, y_train, y_val = train_test_split(
     )
 
 datagen = ImageDataGenerator(
-    rotation_range=15,
-    horizontal_flip=True
-)
+    rotation_range=20,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    zoom_range=0.2,
+    shear_range=0.1,
+    horizontal_flip=True,
+    vertical_flip=True,
+    fill_mode ='nearest')
 
 train_gen = datagen.flow(X_train, y_train, batch_size=32, shuffle=True)
-history = model.fit(train_gen, epochs=10, validation_data=(X_val, y_val),verbose=1)
+history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val),callbacks=[lr, early_stop],verbose=1)
 
 val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
 print(f"Validation accuracy: {val_acc: .3f}")
@@ -203,18 +225,14 @@ for dataset_type in ["testing", "training"]:
 
             for img_file in image_files[:2]:
                 img_path = os.path.join(subfolder_path, img_file)
-                img = cv2.imread(img_path)
                 img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 
                 mask = create_mask(img)
                 processed_img = remove_background(img, mask)
                 improve_img = denoise_image(processed_img)
                 #resizing makes some images weird so it is currently commented out
-                resize_img = resample_image(improve_img, (224,224, 3))
-                normalize_img = normalize_intensity(improve_img)
+                resize_img = resample_image(improve_img, (224,224, 1))
                 normalize_img = normalize_intensity(resize_img)
-                datagen = ImageDataGenerator(rotation_range=15, horizontal_flip=True)
-                datagen.fit(train_img)
 
 elapsed_all = time.perf_counter() - time_program
 print(f"\n Total run time: {elapsed_all: .2f} s")
