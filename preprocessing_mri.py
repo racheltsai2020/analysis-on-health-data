@@ -9,7 +9,7 @@ from skimage.transform import resize
 import nibabel as nib
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.applications import ResNet50
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization, GlobalAveragePooling2D, LeakyReLU
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.regularizers import l2
@@ -17,6 +17,8 @@ from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import Sequence
 import time
+
+from tensorflow.python.ops.gen_nn_ops import LeakyRelu
 
 mri_images = "cancer"
 train_folder = os.path.join(mri_images, "training")
@@ -28,6 +30,7 @@ batch =32
 AUTOTUNE = tf.data.AUTOTUNE
 
 seed = 42
+image_size = 512
 np.random.seed(seed)
 np.random.seed(seed)
 tf.random.set_seed(seed)
@@ -136,27 +139,32 @@ def load_and_preprocess(path, target_size, to_grayscale=True):
 
 def cnn_model(in_shape):
     model = Sequential()
-    model.add(Conv2D(32, (3,3), activation='relu', kernel_regularizer=l2(1e-4), input_shape= in_shape))
+    model.add(Conv2D(32, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4), input_shape= in_shape))
     model.add(BatchNormalization())
+    model.add(LeakyReLU())
     model.add(MaxPooling2D((2,2)))
     model.add(Dropout(0.3))
 
-    model.add(Conv2D(64, (3,3), activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(Conv2D(64, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4)))
     model.add(BatchNormalization())
+    model.add(LeakyReLU())
     model.add(MaxPooling2D((2,2)))
     model.add(Dropout(0.3))
 
-    model.add(Conv2D(128, (3,3), activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(Conv2D(128, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4)))
     model.add(BatchNormalization())
+    model.add(LeakyReLU())
     model.add(MaxPooling2D((2,2)))
     model.add(Dropout(0.4))
 
-    model.add(Conv2D(256, (3,3), activation='relu', kernel_regularizer=l2(1e-4)))
+    model.add(Conv2D(256, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4)))
     model.add(BatchNormalization())
+    model.add(LeakyReLU())
     model.add(MaxPooling2D((2,2)))
     model.add(Dropout(0.5))
 
-    model.add(Flatten())
+    #model.add(Flatten())
+    model.add(GlobalAveragePooling2D())
     model.add(Dense(256, activation='relu', kernel_regularizer=l2(1e-4)))
     model.add(Dropout(0.5))
     model.add(Dense(4, activation='softmax'))
@@ -166,7 +174,7 @@ def cnn_model(in_shape):
 
 early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=1)
 lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
-model = cnn_model((224,224,1))
+model = cnn_model((image_size,image_size,1))
 
 model.summary()
 
@@ -177,7 +185,7 @@ for class_idx, class_name in enumerate(classes):
         if fname.lower().endswith((".png", ".jpg",".jpeg")):
             fpath = os.path.join(class_path, fname)
             try:
-                img = load_and_preprocess(fpath, target_size=(224,224,1), to_grayscale=True)
+                img = load_and_preprocess(fpath, target_size=(image_size,image_size,1), to_grayscale=True)
                 if img is None or img.size ==0:
                     raise ValueError("Preprocess returned empty image")
                 train_img.append(img)
@@ -231,7 +239,7 @@ for dataset_type in ["testing", "training"]:
                 processed_img = remove_background(img, mask)
                 improve_img = denoise_image(processed_img)
                 #resizing makes some images weird so it is currently commented out
-                resize_img = resample_image(improve_img, (224,224, 1))
+                resize_img = resample_image(improve_img, (image_size,image_size, 1))
                 normalize_img = normalize_intensity(resize_img)
 
 elapsed_all = time.perf_counter() - time_program
