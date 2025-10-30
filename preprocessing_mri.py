@@ -8,29 +8,35 @@ from skimage.registration import optical_flow_tvl1
 from skimage.transform import resize
 import nibabel as nib
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications import ResNet50
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization, GlobalAveragePooling2D, LeakyReLU
+from tensorflow.keras.applications import ResNet50, EfficientNetB0
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization, GlobalAveragePooling2D, LeakyReLU, ELU, SpatialDropout2D
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import Sequence
+from tensorflow.keras.models import Model
+from tensorflow.keras.losses import SparseCategoricalCrossentropy
 import time
-
+from collections import Counter
+from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.python.ops.gen_nn_ops import LeakyRelu
 
-mri_images = "cancer"
-train_folder = os.path.join(mri_images, "training")
-test_folder = os.path.join(mri_images, "testing")
+#mri_images = "cancer"
+#train_folder = os.path.join(mri_images, "training")
+#test_folder = os.path.join(mri_images, "testing")
+mri_images = "Brain_Cancer"
+train_folder = mri_images
+test_folder = None
 classes = sorted([d for d in os.listdir(train_folder) if os.path.isdir(os.path.join(train_folder, d))])
 num_class = len(classes)
-assert num_class ==4, f"found {num_class}: {classes}"
+#assert num_class ==4, f"found {num_class}: {classes}"
 batch =32
 AUTOTUNE = tf.data.AUTOTUNE
 
 seed = 42
-image_size = 512
+image_size = 256
 np.random.seed(seed)
 np.random.seed(seed)
 tf.random.set_seed(seed)
@@ -139,44 +145,42 @@ def load_and_preprocess(path, target_size, to_grayscale=True):
 
 def cnn_model(in_shape):
     model = Sequential()
-    model.add(Conv2D(32, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4), input_shape= in_shape))
+    model.add(Conv2D(32, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-5), input_shape= in_shape))
     model.add(BatchNormalization())
-    model.add(LeakyReLU())
+    model.add(ELU(alpha=1.0))
     model.add(MaxPooling2D((2,2)))
-    model.add(Dropout(0.3))
+    model.add(SpatialDropout2D(0.20))
 
-    model.add(Conv2D(64, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4)))
+    model.add(Conv2D(64, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-5)))
     model.add(BatchNormalization())
-    model.add(LeakyReLU())
+    model.add(ELU(alpha=1.0))
     model.add(MaxPooling2D((2,2)))
-    model.add(Dropout(0.3))
+    model.add(SpatialDropout2D(0.25))
 
-    model.add(Conv2D(128, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4)))
+    model.add(Conv2D(128, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-5)))
     model.add(BatchNormalization())
-    model.add(LeakyReLU())
+    model.add(ELU(alpha=1.0))
     model.add(MaxPooling2D((2,2)))
-    model.add(Dropout(0.4))
+    model.add(SpatialDropout2D(0.30))
 
-    model.add(Conv2D(256, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-4)))
+    model.add(Conv2D(256, (3,3), activation='relu', padding="same", kernel_regularizer=l2(1e-5)))
     model.add(BatchNormalization())
-    model.add(LeakyReLU())
+    model.add(ELU(alpha=1.0))
     model.add(MaxPooling2D((2,2)))
-    model.add(Dropout(0.5))
+    model.add(SpatialDropout2D(0.35))
 
     #model.add(Flatten())
     model.add(GlobalAveragePooling2D())
     model.add(Dense(256, activation='relu', kernel_regularizer=l2(1e-4)))
-    model.add(Dropout(0.5))
+    model.add(Dropout(0.3))
     model.add(Dense(4, activation='softmax'))
 
-    model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    loss_fn = SparseCategoricalCrossentropy()
+    model.compile(optimizer=Adam(1e-4), loss=loss_fn, metrics=['accuracy'])
+    #model.compile(loss='sparse_categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
     return model
 
-early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=1)
-lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
-model = cnn_model((image_size,image_size,1))
 
-model.summary()
 
 train_img, train_label = [], []
 for class_idx, class_name in enumerate(classes):
@@ -196,6 +200,19 @@ for class_idx, class_name in enumerate(classes):
 train_img = np.array(train_img, dtype=np.float32)
 train_label = np.array(train_label, dtype=np.int64)
 
+class_counts = Counter(train_label)
+print("Class counts:", class_counts)
+
+plt.figure(figsize=(6,4))
+plt.bar(class_counts.keys(), class_counts.values(), color='steelblue')
+plt.xticks(list(class_counts.keys()), classes, rotation=15)
+plt.title("Training class Distribution")
+plt.xlabel("Class")
+plt.ylabel("Number of images")
+plt.grid(axis='y', linestyle='--', alpha=0.7)
+plt.tight_layout()
+plt.show()
+
 X_train, X_val, y_train, y_val = train_test_split(
         train_img, train_label,
         test_size=0.2,
@@ -203,44 +220,84 @@ X_train, X_val, y_train, y_val = train_test_split(
         stratify=train_label
     )
 
+mean = np.mean(X_train)
+std = np.std(X_train) + 1e-8
+
+print(f"Global mean: {mean: .4f}, std: {std:.4f}")
+
+X_train = (X_train - mean)/ std
+X_val = (X_val - mean) / std
+
+X_test, y_test = [], []
+test_classes = sorted([d for d in os.listdir(test_folder) if os.path.isdir(os.path.join(test_folder, d))])
+for class_idx, class_name in enumerate(test_classes):
+    class_path = os.path.join(test_folder, class_name)
+    for fname in os.listdir(class_path):
+        if fname.lower().endswith((".png", ".jpg",".jpeg")):
+            fpath = os.path.join(class_path, fname)
+            try:
+                img = load_and_preprocess(fpath, target_size=(image_size, image_size, 1))
+                if img is None or img.size == 0:
+                    raise ValueError("Preprocess returned empty image")
+                X_test.append(img)
+                y_test.append(class_idx)
+            except Exception as e:
+                print(f"warning (test set): {e}")
+
+X_test = np.array(X_test, dtype=np.float32)
+y_test = np.array(y_test, dtype=np.int64)
+X_test = (X_test - mean) / std
+
+cw = compute_class_weight('balanced', classes= np.unique(y_train), y=y_train)
+class_weights = dict(enumerate(cw))
+print("class weight:", class_weights)
+
 datagen = ImageDataGenerator(
     rotation_range=20,
     width_shift_range=0.1,
     height_shift_range=0.1,
-    zoom_range=0.2,
+    zoom_range=0.15,
     shear_range=0.1,
     horizontal_flip=True,
-    vertical_flip=True,
-    fill_mode ='nearest')
+    fill_mode ='nearest',
+    preprocessing_function=lambda x: tf.image.random_contrast(x, 0.9, 1.1)
+)
 
 train_gen = datagen.flow(X_train, y_train, batch_size=32, shuffle=True)
-history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val),callbacks=[lr, early_stop],verbose=1)
+early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=1)
+lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
+model = cnn_model((image_size,image_size,1))
+
+model.summary()
+history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val), class_weight=class_weights, callbacks=[lr, early_stop],verbose=1)
 
 val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
+test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
 print(f"Validation accuracy: {val_acc: .3f}")
+print(f"Test accuracy: {test_acc:.3f}")
 
 
-for dataset_type in ["testing", "training"]:
-    dataset_path = os.path.join(mri_images, dataset_type)
+#for dataset_type in ["testing", "training"]:
+    #dataset_path = os.path.join(mri_images, dataset_type)
 
-    for subfolder in os.listdir(dataset_path):
-        subfolder_path = os.path.join(dataset_path, subfolder)
+    #for subfolder in os.listdir(dataset_path):
+        #subfolder_path = os.path.join(dataset_path, subfolder)
 
-        if os.path.isdir(subfolder_path):
-            print(f"Accessing folder: {subfolder_path}")
+        #if os.path.isdir(subfolder_path):
+            #print(f"Accessing folder: {subfolder_path}")
 
-            image_files = [f for f in os.listdir(subfolder_path) if f.endswith((".png",".jpg",".jpeg"))]
+            #image_files = [f for f in os.listdir(subfolder_path) if f.endswith((".png",".jpg",".jpeg"))]
 
-            for img_file in image_files[:2]:
-                img_path = os.path.join(subfolder_path, img_file)
-                img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+            #for img_file in image_files[:2]:
+                #img_path = os.path.join(subfolder_path, img_file)
+                #img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
 
-                mask = create_mask(img)
-                processed_img = remove_background(img, mask)
-                improve_img = denoise_image(processed_img)
+                #mask = create_mask(img)
+                #processed_img = remove_background(img, mask)
+                #improve_img = denoise_image(processed_img)
                 #resizing makes some images weird so it is currently commented out
-                resize_img = resample_image(improve_img, (image_size,image_size, 1))
-                normalize_img = normalize_intensity(resize_img)
+                #resize_img = resample_image(improve_img, (image_size,image_size, 1))
+                #normalize_img = normalize_intensity(resize_img)
 
 elapsed_all = time.perf_counter() - time_program
 print(f"\n Total run time: {elapsed_all: .2f} s")
