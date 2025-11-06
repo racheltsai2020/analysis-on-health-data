@@ -13,7 +13,8 @@ from sklearn.feature_selection import RFE
 from math import sqrt
 from sklearn.model_selection import train_test_split
 from tabnet import TabNet
-
+import os
+import datetime
 
 
 df = pd.read_csv("heart/heart.csv")
@@ -57,8 +58,8 @@ column_name = {
 #Z-score for numerical values, one-hot encoding for categorical
 preprocess = ColumnTransformer(transformers=[
     ('number', StandardScaler(), num_columns),
-    ('categories', OneHotEncoder(drop='first', sparse_output=False), cat_columns)
-])
+    ('categories', OneHotEncoder(drop='first', sparse_output=False, handle_unknown='ignore'), cat_columns)
+], remainder='drop')
 
 #Applying preprocessing
 process_data_no_duplicate = preprocess.fit_transform(remove_duplicates)
@@ -212,6 +213,37 @@ with torch.no_grad():
         actual_val = y_test_cpu[i].item()
         print(f"Pred: {pred_val: .4f}, Actual: {actual_val: .4f}")
 
+#saving the best trained model
+models_dir = "models"
+os.makedirs(models_dir, exist_ok=True)
+
+#find path to best results
+best_scores = os.path.join(models_dir, "best_tabnet.txt")
+best_r2 = -float("inf")
+
+#load last best result
+if os.path.exists(best_scores):
+    with open(best_scores, "r") as f:
+        try:
+            best_r2 = float(f.read().strip())
+        except:
+            best_r2 = -float("inf")
+
+# if new is better than old results
+if tab_r2 > best_r2:
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    current_model = os.path.join(models_dir, f"tabnet_heartattack_{timestamp}.pt")
+    torch.save(model.state_dict(), current_model)
+
+    with open(best_scores, "w") as f:
+        f.write(str(tab_r2))
+    torch.save(model.state_dict(), os.path.join(models_dir, "tabnet_heartattack_best.pt"))
+
+    print(f"\nNew best model saved ({current_model}) with R-squared: {tab_r2:.4f}")
+else:
+    print(f"\nNo improvement (Current R-Squared = {tab_r2: .4f}, Best = {best_r2:.4f})")
+
+
 
 #comparison visualization
 metrics_df = pd.DataFrame({
@@ -231,4 +263,4 @@ plt.ylabel('Score', fontsize= 14)
 plt.xlabel('Metric', fontsize=14)
 plt.legend(title='Model')
 plt.tight_layout()
-plt.show()
+#plt.show()

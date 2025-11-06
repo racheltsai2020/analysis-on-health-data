@@ -13,7 +13,7 @@ from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dens
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.regularizers import l2
-from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint
 from sklearn.model_selection import train_test_split
 from tensorflow.keras.utils import Sequence
 from tensorflow.keras.models import Model
@@ -22,6 +22,7 @@ import time
 from collections import Counter
 from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.python.ops.gen_nn_ops import LeakyRelu
+import datetime
 
 #mri_images = "cancer"
 #train_folder = os.path.join(mri_images, "training")
@@ -266,6 +267,20 @@ datagen = ImageDataGenerator(
 train_gen = datagen.flow(X_train, y_train, batch_size=32, shuffle=True)
 early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True, verbose=1)
 lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
+
+#save best model
+os.makedirs("models", exist_ok=True)
+best_model = "models/ cnn_brainturmor_best.h5"
+
+checkpoint = ModelCheckpoint(
+    filepath = best_model,
+    monitor="val_accuracy",
+    save_best_only=True,
+    save_weights_only=False,
+    mode="max",
+    verbose=1
+)
+
 model = cnn_model((image_size,image_size,1))
 
 model.summary()
@@ -275,6 +290,12 @@ val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
 test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
 print(f"Validation accuracy: {val_acc: .3f}")
 print(f"Test accuracy: {test_acc:.3f}")
+
+best_validation_accuracy = max(history.history["val_accuracy"])
+print(f"\n Best validation accuracy during training: {best_validation_accuracy:.4f}")
+
+with open("models/best_cnn_accuracy.txt", "w") as f:
+    f.write(str(best_validation_accuracy))
 
 
 #for dataset_type in ["testing", "training"]:
