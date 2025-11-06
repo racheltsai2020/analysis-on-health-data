@@ -24,12 +24,12 @@ from sklearn.utils.class_weight import compute_class_weight
 from tensorflow.python.ops.gen_nn_ops import LeakyRelu
 import datetime
 
-#mri_images = "cancer"
-#train_folder = os.path.join(mri_images, "training")
-#test_folder = os.path.join(mri_images, "testing")
-mri_images = "Brain_Cancer"
-train_folder = mri_images
-test_folder = None
+mri_images = "cancer"
+train_folder = os.path.join(mri_images, "training")
+test_folder = os.path.join(mri_images, "testing")
+#mri_images = "Brain_Cancer"
+#train_folder = mri_images
+#test_folder = None
 classes = sorted([d for d in os.listdir(train_folder) if os.path.isdir(os.path.join(train_folder, d))])
 num_class = len(classes)
 #assert num_class ==4, f"found {num_class}: {classes}"
@@ -270,7 +270,7 @@ lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
 
 #save best model
 os.makedirs("models", exist_ok=True)
-best_model = "models/ cnn_brainturmor_best.h5"
+best_model = "models/cnn_brainturmor_best.h5"
 
 checkpoint = ModelCheckpoint(
     filepath = best_model,
@@ -284,7 +284,7 @@ checkpoint = ModelCheckpoint(
 model = cnn_model((image_size,image_size,1))
 
 model.summary()
-history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val), class_weight=class_weights, callbacks=[lr, early_stop],verbose=1)
+history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val), class_weight=class_weights, callbacks=[lr, early_stop, checkpoint],verbose=1)
 
 val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
 test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)

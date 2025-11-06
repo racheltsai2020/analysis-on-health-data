@@ -83,22 +83,22 @@ def main(input_path):
         csv_files = [f for f in files if f.lower().endswith('.csv')]
         image_files = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
-        if csv_file and image_files:
+        if csv_files and image_files:
             print(f"The input files includes both csv file and MRI images")
             for csv_file in csv_files:
-                #heart attack prediction method
+                predict_heart_attack(os.path.join(input_path, csv_file))
             for image_file in image_files:
                 diagnose_tumor(os.path.join(input_path, img_file))
 
         elif csv_files:
             print(f"Input data only contains csv data. \nNow running heart attack prediction")
             for csv_file in csv_files:
-                #heart attack prediction method
+                predict_heart_attack(os.path.join(input_path, csv_file))
 
         elif image_files:
             print(f"Input only contains MRI images. \nNow running brain tumor detection")
             for img_file in image_files:
-                #diagnose mri image
+                diagnose_tumor(os.path.join(input_path, img_file))
 
         else:
             print("The inputted data does not contain any csv files or mri images")
@@ -106,10 +106,10 @@ def main(input_path):
     #only contain a single csv file
     elif input_path.lower().endswith('.csv'):
         print("There is only a single csv file. \n Now running heart attack prediction")
-        #heart attack prediction method
+        predict_heart_attack(input_path)
     elif input_path.lower().endswith(('.png', '.jpg','.jpeg')):
         print("There are only images in this folder. \n Now running brain tumor detection")
-        #predict mri image
+        diagnose_tumor(input_path)
     else:
         print("Does not support the file inputted. Please input csv files, or images")
 
