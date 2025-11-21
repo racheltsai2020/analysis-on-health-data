@@ -8,10 +8,22 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 import pandas as pd
 import cv2
+import joblib
+from preprocessing_mri import create_mask, remove_background, normalize_intensity, to_grayscale
+from skimage.transform import resize
+import json
 
 #load models 
 tabnet_model = "models/tabnet_heartattack_best.pt"
 cnn_model = "models/cnn_braintumor_best.h5"
+
+try:
+    with open("models/cnn_class.json") as f:
+        classes = [c.capitalize() for c in json.load(f)]
+    print(f"Tumor classes: {classes}")
+except Exception as e:
+    print(f"unable to load classes")
+    classes = ["Glioma", "Meningioma", "No Tumor", "Pituitary"]
 
 num_columns = ['age', 'trestbps','chol','thalach', 'oldpeak','ca']
 cat_columns = ['sex', 'cp','fbs','restecg','exang','slope','thal']
@@ -31,14 +43,14 @@ def predict_heart_attack(csv_path):
         print("data in this csv file is not valid")
         return
 
-    #Z-score for numerical values, one-hot encoding for categorical
-    preprocess = ColumnTransformer(transformers=[
-        ('number', StandardScaler(), contain_num),
-        ('categories', OneHotEncoder(drop='first', sparse_output=False, handle_unknown='ignore'), contain_cat)
-    ], remainder='drop')
+    preprocess = joblib.load("models/tabnet_preprocessor.pkl")
 
-    x = df[contain_num + contain_cat]
-    x_process = preprocess.fit_transform(x)
+    for col in preprocess.feature_names_in_:
+        if col not in df.columns:
+            df[col]=0
+
+    x = df[preprocess.feature_names_in_]
+    x_process = preprocess.transform(x)
     x_tensor = torch.tensor(x_process, dtype=torch.float32).to(device)
 
     #run tabnet
@@ -52,26 +64,44 @@ def predict_heart_attack(csv_path):
 
     print("\n Heart Attack Risk Predictions:")
     for i, p in enumerate(predictions):
-        print(f" Sample {i+1}: {p:.3f}")
+        print(f" Patient {i+1}: {p:.3f}")
 
 #loading mri image
 def load_image(path, target_size=(256, 256)):
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+    img = cv2.imread(path, cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"Could not read image from: {path}")
-    img = cv2.resize(img, target_size)
-    img = img.astype(np.float32) / 255.0
-    return np.expand_dims(img, axis=(0, -1))
+
+    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    mask = create_mask(rgb)
+    rgb_bg_remove = remove_background(rgb, mask)
+    gray = cv2.cvtColor((rgb_bg_remove * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    gray = normalize_intensity(gray)
+    gray = resize(gray, target_size, order=3, mode='reflect', anti_aliasing=True, preserve_range=True)
+    gray = np.expand_dims(gray, axis=(0, -1))
+
+    mean_std = "models/mean_std.npy"
+    if os.path.exists(mean_std):
+        mean, std = np.load(mean_std)
+        gray = (gray - mean) / (std+1e-8)
+
+    return gray.astype(np.float32)
 
 #running brain tumor model
 def diagnose_tumor(image_path):
     print(f"\n The input MRI image: {os.path.basename(image_path)}")
     model = load_model(cnn_model)
     img = load_image(image_path)
+    print("image shape:", img.shape)
+    print("Min & Max:", float(img.min()), float(img.max()))
+    print("Mean:", float(img.mean()), "std:", float(img.std()))
     predictions = model.predict(img)
     label = np.argmax(predictions, axis=1)[0]
-    print(f" Predicted tumor type: {label}")
-    print(f" Probabilities: {np.round(predictions[0], 3)}")
+    tumortype= classes[label] if label < len(classes) else f"Unknown ({label})"
+
+    print(f"Predicted tumor type: {tumortype}")
+    print(f"Probabilities: {np.round(predictions[0],3)}")
 
 
 #main method which checks what type of input data it is
@@ -84,11 +114,11 @@ def main(input_path):
         image_files = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
         if csv_files and image_files:
-            print(f"The input files includes both csv file and MRI images")
+            print(f"The input files include both csv file and MRI images")
             for csv_file in csv_files:
                 predict_heart_attack(os.path.join(input_path, csv_file))
             for image_file in image_files:
-                diagnose_tumor(os.path.join(input_path, img_file))
+                diagnose_tumor(os.path.join(input_path, image_file))
 
         elif csv_files:
             print(f"Input data only contains csv data. \nNow running heart attack prediction")

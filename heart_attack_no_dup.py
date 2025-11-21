@@ -15,6 +15,7 @@ from sklearn.model_selection import train_test_split
 from tabnet import TabNet
 import os
 import datetime
+import joblib
 
 
 df = pd.read_csv("heart/heart.csv")
@@ -64,6 +65,11 @@ preprocess = ColumnTransformer(transformers=[
 #Applying preprocessing
 process_data_no_duplicate = preprocess.fit_transform(remove_duplicates)
 process_data = preprocess.fit_transform(df)
+
+os.makedirs("models", exist_ok=True)
+joblib.dump(preprocess, "models/tabnet_preprocessor.pkl")
+print("Saved preprocessor to model")
+
 
 cat_names = preprocess.transformers_[1][1].get_feature_names_out(cat_columns)
 all_column = num_columns + list(cat_names)

@@ -8,21 +8,18 @@ from skimage.registration import optical_flow_tvl1
 from skimage.transform import resize
 import nibabel as nib
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications import ResNet50, EfficientNetB0
 from tensorflow.keras.layers import Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization, GlobalAveragePooling2D, LeakyReLU, ELU, SpatialDropout2D
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.utils import Sequence
-from tensorflow.keras.models import Model
 from tensorflow.keras.losses import SparseCategoricalCrossentropy
 import time
 from collections import Counter
 from sklearn.utils.class_weight import compute_class_weight
-from tensorflow.python.ops.gen_nn_ops import LeakyRelu
 import datetime
+import json
 
 mri_images = "cancer"
 train_folder = os.path.join(mri_images, "training")
@@ -32,13 +29,16 @@ test_folder = os.path.join(mri_images, "testing")
 #test_folder = None
 classes = sorted([d for d in os.listdir(train_folder) if os.path.isdir(os.path.join(train_folder, d))])
 num_class = len(classes)
+os.makedirs("models", exist_ok=True)
+with open("models/cnn_class.json", "w") as f:
+    json.dump(classes, f)
+print(f"Class order: {classes}")
 #assert num_class ==4, f"found {num_class}: {classes}"
 batch =32
 AUTOTUNE = tf.data.AUTOTUNE
 
 seed = 42
 image_size = 256
-np.random.seed(seed)
 np.random.seed(seed)
 tf.random.set_seed(seed)
 
@@ -60,7 +60,7 @@ def to_grayscale(image):
         elif c==4:
             gray = cv2.cvtColor(image, cv2.COLOR_BGRA2GRAY)
         else:
-            raise ValueError(f"Unsupport channel count: {c}")
+            raise ValueError(f"Unsupported channel count: {c}")
     else:
         raise ValueError(f"unsupported image shapre: {image.shape}")
 
@@ -226,6 +226,9 @@ std = np.std(X_train) + 1e-8
 
 print(f"Global mean: {mean: .4f}, std: {std:.4f}")
 
+#os.makedirs("models", exist_ok=True)
+#np.save("models/mean_std.npy", [mean, std])
+
 X_train = (X_train - mean)/ std
 X_val = (X_val - mean) / std
 
@@ -270,7 +273,7 @@ lr = ReduceLROnPlateau(monitor="val_loss", factor=0.5, patience=2, verbose=1)
 
 #save best model
 os.makedirs("models", exist_ok=True)
-best_model = "models/cnn_brainturmor_best.h5"
+best_model = "models/cnn_braintumor_best.h5"
 
 checkpoint = ModelCheckpoint(
     filepath = best_model,
@@ -281,21 +284,21 @@ checkpoint = ModelCheckpoint(
     verbose=1
 )
 
-model = cnn_model((image_size,image_size,1))
+#model = cnn_model((image_size,image_size,1))
 
-model.summary()
-history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val), class_weight=class_weights, callbacks=[lr, early_stop, checkpoint],verbose=1)
+#model.summary()
+#history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val), class_weight=class_weights, callbacks=[lr, early_stop, checkpoint],verbose=1)
 
-val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
-test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
-print(f"Validation accuracy: {val_acc: .3f}")
-print(f"Test accuracy: {test_acc:.3f}")
+#val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
+#test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+#print(f"Validation accuracy: {val_acc: .3f}")
+#print(f"Test accuracy: {test_acc:.3f}")
 
-best_validation_accuracy = max(history.history["val_accuracy"])
-print(f"\n Best validation accuracy during training: {best_validation_accuracy:.4f}")
+#best_validation_accuracy = max(history.history["val_accuracy"])
+#print(f"\n Best validation accuracy during training: {best_validation_accuracy:.4f}")
 
-with open("models/best_cnn_accuracy.txt", "w") as f:
-    f.write(str(best_validation_accuracy))
+#with open("models/best_cnn_accuracy.txt", "w") as f:
+    #f.write(str(best_validation_accuracy))
 
 
 #for dataset_type in ["testing", "training"]:
@@ -320,8 +323,8 @@ with open("models/best_cnn_accuracy.txt", "w") as f:
                 #resize_img = resample_image(improve_img, (image_size,image_size, 1))
                 #normalize_img = normalize_intensity(resize_img)
 
-elapsed_all = time.perf_counter() - time_program
-print(f"\n Total run time: {elapsed_all: .2f} s")
+#elapsed_all = time.perf_counter() - time_program
+#print(f"\n Total run time: {elapsed_all: .2f} s")
 
                 
 
@@ -366,4 +369,25 @@ print(f"\n Total run time: {elapsed_all: .2f} s")
 #axes[1].axis("off")
 #plt.show()
 
+if __name__ == "__main__":
+    model = cnn_model((image_size, image_size, 1))
+    model.summary()
 
+    history = model.fit(train_gen, epochs=30, validation_data=(X_val, y_val), class_weight=class_weights, callbacks=[lr, early_stop, checkpoint],verbose=1)
+
+    val_loss, val_acc = model.evaluate(X_val, y_val, verbose=0)
+    test_loss, test_acc = model.evaluate(X_test, y_test, verbose=0)
+    print(f"Validation accuracy: {val_acc: .3f}")
+    print(f"Test accuracy: {test_acc:.3f}")
+
+    best_validation_accuracy = max(history.history["val_accuracy"])
+    print(f"\n Best validation accuracy during training: {best_validation_accuracy:.4f}")
+
+    os.makedirs("models", exist_ok=True)
+    np.save("models/mean_std.npy", [mean, std])
+
+    with open("models/best_cnn_accuracy.txt", "w") as f:
+        f.write(str(best_validation_accuracy))
+
+    elapsed_all = time.perf_counter() - time_program
+    print(f"\n Total run time: {elapsed_all: .2f} s")
